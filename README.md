@@ -57,13 +57,16 @@ export PATH="$HOME/.local/bin:$PATH"
 # Initialize Wave in your Git repository
 wave init
 
+# (Optional) Set your default base branch
+echo "DEFAULT_BASE_BRANCH=origin/develop" >> .wave/config
+
 # Create a worktree for an existing branch
 wave create feature/existing-branch
 
-# Create a new branch from current HEAD
+# Create a new branch (uses default base from config, or current branch)
 wave create feature/new-feature
 
-# Create a new branch from a specific base (local or remote)
+# Create a new branch from a specific base (overrides config)
 wave create feature/new-login develop
 wave create hotfix/bug-123 origin/main
 
@@ -72,6 +75,12 @@ wave ls
 
 # Run a command in a specific worktree
 wave exec feature/new-login npm run dev
+
+# Navigate to a worktree
+cd $(wave cd feature/new-login)
+
+# Navigate back to main repository
+cd $(wave cd origin)
 
 # Remove a worktree when done
 wave remove feature/new-login
@@ -88,7 +97,8 @@ wave remove feature/new-login
 | `wave status` | Show detailed worktree status (default) |
 | `wave` | Alias for `wave status` |
 | `wave exec <branch> <cmd>` | Execute a command in a worktree |
-| `wave prune` | Clean up stale worktree references |
+| `wave cd [branch\|origin]` | Print worktree path (use: `cd $(wave cd branch)`) |
+| `wave prune` | Clean up stale worktree metadata (after manual deletion) |
 | `wave self-update` | Update Wave to the latest version |
 
 **Aliases:** `wave up` (create), `wave down` (remove) - for backward compatibility
@@ -109,16 +119,17 @@ wave create feature/from-teammate
 # Checks out origin/feature/from-teammate if it exists remotely
 ```
 
-**New branch from current HEAD:**
+**New branch (uses config or current branch):**
 ```bash
 wave create feature/new-thing
-# Creates a new branch from wherever you currently are
+# Priority: 1) Config DEFAULT_BASE_BRANCH, 2) Current branch
 ```
 
 **New branch from specific base:**
 ```bash
 wave create feature/new-thing develop
 # Creates a new branch from local 'develop' or 'origin/develop'
+# Command line argument overrides config
 
 wave create hotfix/urgent main
 # Creates from 'main' or 'origin/main'
@@ -144,6 +155,35 @@ Wave organizes your worktrees in a clean structure alongside your main repositor
 If your main repo is at `/home/you/projects/myapp/`, Wave creates worktrees at `/home/you/projects/myapp-wave/`.
 
 Each worktree is a complete working directory with its own branch checked out. You can open them in your editor, run dev servers, make commits - they're fully independent copies of your repository.
+
+## Configuration
+
+Wave uses a simple configuration file at `.wave/config` to customize behavior.
+
+### Default Base Branch
+
+Set a default base branch for creating new worktrees:
+
+```bash
+# .wave/config
+DEFAULT_BASE_BRANCH=origin/develop
+```
+
+**Priority order when creating branches:**
+1. Command line argument: `wave create feature-x main` (uses `main`)
+2. Config file: `DEFAULT_BASE_BRANCH=origin/develop` (uses `origin/develop`)
+3. Current branch: Falls back to whatever branch you're currently on
+
+**Examples:**
+
+```bash
+# Always create from origin/develop
+echo "DEFAULT_BASE_BRANCH=origin/develop" >> .wave/config
+wave create feature-x  # Creates from origin/develop
+
+# Override with command line
+wave create hotfix-y main  # Creates from main (ignores config)
+```
 
 ## Custom Hooks
 
@@ -189,8 +229,11 @@ Runs **before** `wave up` or `wave create`:
 
 ```bash
 #!/bin/sh
-# Runs before creating any worktree
-echo "🌊 Preparing to create worktree..."
+# Args: $1=branch_name $2=base_branch
+BRANCH_NAME="$1"
+BASE_BRANCH="$2"
+
+echo "Preparing to create worktree for $BRANCH_NAME from $BASE_BRANCH..."
 # e.g., check disk space, fetch latest from origin
 git fetch --all
 ```
@@ -201,8 +244,10 @@ Runs **before** `wave down` or `wave remove`:
 
 ```bash
 #!/bin/sh
-# Runs before removing any worktree
-echo "🌊 Preparing to remove worktree..."
+# Args: $1=branch_name
+BRANCH_NAME="$1"
+
+echo "Preparing to remove worktree: $BRANCH_NAME..."
 # e.g., backup data, notify team
 ```
 
@@ -212,8 +257,10 @@ Runs **before** `wave status` (also runs when you type just `wave`):
 
 ```bash
 #!/bin/sh
-# Runs before showing status
-echo "🌊 Checking worktree health..."
+# Args: $1=current_branch
+CURRENT_BRANCH="$1"
+
+echo "Checking worktree health from $CURRENT_BRANCH..."
 # e.g., check for uncommitted changes, running processes
 ```
 

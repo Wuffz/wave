@@ -14,9 +14,32 @@ get_repo_info() {
   WAVE_WORKTREES="$(dirname "$REPO_ROOT")/${PROJECT_NAME}-wave"
 }
 
+get_config() {
+  CONFIG_FILE="$WAVE_DIR/config"
+  if [ -f "$CONFIG_FILE" ]; then
+    # Read DEFAULT_BASE_BRANCH from config
+    DEFAULT_BASE_BRANCH="$(grep '^DEFAULT_BASE_BRANCH=' "$CONFIG_FILE" | cut -d'=' -f2-)"
+  else
+    DEFAULT_BASE_BRANCH=""
+  fi
+}
+
 wave_init() {
   get_repo_info
   mkdir -p "$WAVE_DIR" "$WAVE_WORKTREES"
+
+  # Create config file if it doesn't exist
+  if [ ! -f "$WAVE_DIR/config" ]; then
+    cat > "$WAVE_DIR/config" << 'EOF'
+# Wave configuration file
+
+# Default base branch when creating new worktrees
+# If not specified, uses current branch
+# Examples: main, develop, origin/develop
+DEFAULT_BASE_BRANCH=
+
+EOF
+  fi
 
   # Create hook files
   touch "$WAVE_DIR/setup.sh" "$WAVE_DIR/cleanup.sh" "$WAVE_DIR/up.sh" "$WAVE_DIR/down.sh" "$WAVE_DIR/status.sh"
@@ -25,12 +48,14 @@ wave_init() {
   # Add default content to hooks
   echo "#!/bin/sh\n# setup logic for new worktree\n# Args: \$1=worktree_path \$2=branch_name" > "$WAVE_DIR/setup.sh"
   echo "#!/bin/sh\n# cleanup logic for removed worktree\n# Args: \$1=worktree_path \$2=branch_name" > "$WAVE_DIR/cleanup.sh"
-  echo "#!/bin/sh\n# runs before wave up/create" > "$WAVE_DIR/up.sh"
-  echo "#!/bin/sh\n# runs before wave down/remove" > "$WAVE_DIR/down.sh"
-  echo "#!/bin/sh\n# runs before wave status" > "$WAVE_DIR/status.sh"
+  echo "#!/bin/sh\n# runs before wave up/create\n# Args: \$1=branch_name \$2=base_branch" > "$WAVE_DIR/up.sh"
+  echo "#!/bin/sh\n# runs before wave down/remove\n# Args: \$1=branch_name" > "$WAVE_DIR/down.sh"
+  echo "#!/bin/sh\n# runs before wave status\n# Args: \$1=current_branch" > "$WAVE_DIR/status.sh"
 
   echo "Initialized .wave and ${PROJECT_NAME}-wave directories"
-  echo "Created hooks: setup.sh, cleanup.sh, up.sh, down.sh, status.sh"
+  echo "Created config and hooks: setup.sh, cleanup.sh, up.sh, down.sh, status.sh"
+  echo ""
+  echo "Edit .wave/config to set your default base branch"
 }
 
 wave_create() {
@@ -39,6 +64,19 @@ wave_create() {
   [ -z "$BRANCH" ] && echo "Usage: wave create <branch> [base-branch]" && exit 1
   require_git_repo
   get_repo_info
+  get_config
+
+  # Determine base branch priority:
+  # 1. Command line argument
+  # 2. Config file DEFAULT_BASE_BRANCH
+  # 3. Current branch
+  if [ -z "$BASE_BRANCH" ]; then
+    if [ -n "$DEFAULT_BASE_BRANCH" ]; then
+      BASE_BRANCH="$DEFAULT_BASE_BRANCH"
+    else
+      BASE_BRANCH="$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD)"
+    fi
+  fi
 
   TARGET="$WAVE_WORKTREES/$BRANCH"
 
@@ -52,22 +90,16 @@ wave_create() {
     git -C "$REPO_ROOT" worktree add "$TARGET" "$BRANCH"
   # Create new branch
   else
-    if [ -n "$BASE_BRANCH" ]; then
-      # Try remote first, then local
-      if git -C "$REPO_ROOT" show-ref --verify --quiet "refs/remotes/origin/$BASE_BRANCH"; then
-        echo "Creating '$BRANCH' from 'origin/$BASE_BRANCH'"
-        BASE_REF="origin/$BASE_BRANCH"
-      elif git -C "$REPO_ROOT" show-ref --verify --quiet "refs/heads/$BASE_BRANCH"; then
-        echo "Creating '$BRANCH' from local '$BASE_BRANCH'"
-        BASE_REF="$BASE_BRANCH"
-      else
-        echo "Error: Base branch '$BASE_BRANCH' not found locally or on origin"
-        exit 1
-      fi
+    # Try remote first, then local
+    if git -C "$REPO_ROOT" show-ref --verify --quiet "refs/remotes/origin/$BASE_BRANCH"; then
+      echo "Creating '$BRANCH' from 'origin/$BASE_BRANCH'"
+      BASE_REF="origin/$BASE_BRANCH"
+    elif git -C "$REPO_ROOT" show-ref --verify --quiet "refs/heads/$BASE_BRANCH"; then
+      echo "Creating '$BRANCH' from local '$BASE_BRANCH'"
+      BASE_REF="$BASE_BRANCH"
     else
-      # Default to current HEAD
-      echo "Creating '$BRANCH' from current HEAD"
-      BASE_REF="HEAD"
+      echo "Error: Base branch '$BASE_BRANCH' not found locally or on origin"
+      exit 1
     fi
     git -C "$REPO_ROOT" worktree add -b "$BRANCH" "$TARGET" "$BASE_REF"
   fi
@@ -94,14 +126,14 @@ wave_remove() {
 wave_up() {
   require_git_repo
   get_repo_info
-  [ -x "$WAVE_DIR/up.sh" ] && "$WAVE_DIR/up.sh"
+  [ -x "$WAVE_DIR/up.sh" ] && "$WAVE_DIR/up.sh" "$1" "$2"
   wave_create "$@"
 }
 
 wave_down() {
   require_git_repo
   get_repo_info
-  [ -x "$WAVE_DIR/down.sh" ] && "$WAVE_DIR/down.sh"
+  [ -x "$WAVE_DIR/down.sh" ] && "$WAVE_DIR/down.sh" "$1"
   wave_remove "$@"
 }
 
@@ -116,10 +148,18 @@ wave_status() {
   require_git_repo
   get_repo_info
 
-  # Run status hook if it exists
-  [ -x "$WAVE_DIR/status.sh" ] && "$WAVE_DIR/status.sh"
+  # Get current branch for hook
+  CURRENT_BRANCH="$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD)"
 
-  echo "Worktree status:"
+  # Run status hook if it exists
+  [ -x "$WAVE_DIR/status.sh" ] && "$WAVE_DIR/status.sh" "$CURRENT_BRANCH"
+
+  # if there are paths 
+  if [ -n "$(ls -A "$WAVE_WORKTREES")" ]; then
+    echo "Worktree status:"
+    echo "----------------"
+  fi
+  
   for path in "$WAVE_WORKTREES"/*; do
     [ -d "$path" ] || continue
     BRANCH="$(basename "$path")"
@@ -138,6 +178,38 @@ wave_exec() {
   [ -d "$TARGET" ] || { echo "No worktree found for branch '$BRANCH'"; exit 1; }
 
   (cd "$TARGET" && "$@")
+}
+
+wave_cd() {
+  BRANCH="$1"
+  require_git_repo
+  get_repo_info
+
+  # If no branch specified, show all worktrees with their paths
+  if [ -z "$BRANCH" ]; then
+    echo "Available worktrees:"
+    echo "  origin -> $REPO_ROOT"
+    for path in "$WAVE_WORKTREES"/*; do
+      [ -d "$path" ] || continue
+      BRANCH_NAME="$(basename "$path")"
+      echo "  $BRANCH_NAME -> $path"
+    done
+    echo ""
+    echo "Usage: cd \$(wave cd <branch|origin>)"
+    exit 0
+  fi
+
+  # Special case: 'origin' refers to the main repository
+  if [ "$BRANCH" = "origin" ]; then
+    echo "$REPO_ROOT"
+    exit 0
+  fi
+
+  TARGET="$WAVE_WORKTREES/$BRANCH"
+  [ -d "$TARGET" ] || { echo "Error: No worktree found for branch '$BRANCH'" >&2; exit 1; }
+
+  # Print only the path (so it can be used with cd)
+  echo "$TARGET"
 }
 
 wave_prune() {
@@ -203,14 +275,17 @@ case "$1" in
   ls) wave_ls ;;
   status) wave_status ;;
   exec) shift; wave_exec "$@" ;;
+  cd) shift; wave_cd "$@" ;;
   prune) wave_prune ;;
   self-update) wave_self_update ;;
-  "")
-    # Default to status when no command provided
-    wave_status
-    ;;
+  # "")
+  #   # Default to status when no command provided
+  #   wave_status
+  #   ;;
   *)
-    echo "Usage: wave {init|create <branch> [base]|remove <branch>|ls|status|exec <branch> <cmd>|prune|self-update}"
+   # run wave status - if not empty show it here. otherwise don't even output a end of line!
+    wave_status
+    echo "Usage: wave {init|create <branch> [base]|remove <branch>|ls|status|exec <branch> <cmd>|cd <branch>|prune|self-update}"
     echo "       Aliases: up (create), down (remove)"
     echo "       Run 'wave' without arguments to show status"
     exit 1

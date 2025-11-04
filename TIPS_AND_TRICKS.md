@@ -22,9 +22,15 @@ Wave provides five hooks for automation. Here are practical examples:
 
 ```bash
 #!/bin/sh
-echo "🌊 Fetching latest from origin..."
+# Args: $1=branch_name $2=base_branch
+BRANCH_NAME="$1"
+BASE_BRANCH="$2"
+
+echo "Fetching latest from origin..."
 git fetch --all --prune
-echo "✅ Ready to create worktree"
+
+echo "Creating $BRANCH_NAME from $BASE_BRANCH"
+echo "Ready to create worktree"
 ```
 
 ### Check for Uncommitted Changes Before Removing
@@ -33,10 +39,13 @@ echo "✅ Ready to create worktree"
 
 ```bash
 #!/bin/sh
-echo "🌊 Checking for uncommitted work..."
+# Args: $1=branch_name
+BRANCH_NAME="$1"
 
-# This runs before the specific worktree is identified
-# You could add global checks here
+echo "Preparing to remove: $BRANCH_NAME"
+
+# You could add checks here, like verifying the branch is merged
+# or checking if there are any running processes for this worktree
 ```
 
 ### Display Running Processes in Status
@@ -45,11 +54,14 @@ echo "🌊 Checking for uncommitted work..."
 
 ```bash
 #!/bin/sh
-echo "🌊 Active development servers:"
+# Args: $1=current_branch
+CURRENT_BRANCH="$1"
+
+echo "Active development servers (current: $CURRENT_BRANCH):"
 
 # Check for running npm/node processes
 ps aux | grep -E "node|npm" | grep -v grep | while read line; do
-  echo "  • $line"
+  echo "  $line"
 done
 
 echo ""
@@ -466,24 +478,63 @@ ln -s ~/.wave-cache/node_modules node_modules
 npm install
 ```
 
-### Git Aliases
+### Quick Navigation to Worktrees
 
-Add to your `~/.gitconfig`:
+Use `wave cd` to navigate to worktrees:
 
-```ini
-[alias]
-  w = !wave
-  wc = !wave create
-  wr = !wave remove
-  wls = !wave ls
+```bash
+# Navigate to a worktree
+cd $(wave cd feature-x)
+
+# Navigate back to main repository
+cd $(wave cd origin)
+
+# List all worktrees with paths (including origin)
+wave cd
+
+# Combine with other commands
+cd $(wave cd feature-x) && npm run dev
+
+# Quick back-and-forth
+cd $(wave cd feature-x)  # Work on feature
+cd $(wave cd origin)     # Back to main repo
 ```
 
-Now use: `git wc feature-x`
+### Shell Aliases
+
+Wave is already short, but you can add shell aliases if desired:
+
+```bash
+# Add to ~/.bashrc or ~/.zshrc
+alias w='wave'
+alias wcd='cd $(wave cd $1)'  # Quick navigation
+```
+
+Now use: `w create feature-x`, `w status`, etc.
+
+### Understanding `wave prune`
+
+`wave prune` cleans up **stale metadata** for worktrees that were manually deleted:
+
+```bash
+# If you manually deleted a worktree directory
+rm -rf ../myproject-wave/feature-x
+
+# Git still thinks it exists - clean up the metadata
+wave prune
+```
+
+**Note:** `wave prune` does NOT:
+- Delete worktrees
+- Check for uncommitted changes
+- Remove branches
+
+Use `wave remove` to properly remove worktrees.
 
 ### Cleanup All Worktrees
 
 ```bash
-# Remove all wave worktrees
+# Remove all wave worktrees properly
 for branch in $(wave ls | grep wave | awk '{print $NF}' | xargs basename); do
   wave remove "$branch"
 done
