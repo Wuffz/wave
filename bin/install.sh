@@ -103,8 +103,7 @@ if [ -x "$WAVE_BIN" ]; then
   echo ""
   echo "Get started:"
   echo "  cd your-git-repo"
-  echo "  wave init"
-  echo "  wave create feature-branch"
+  echo "  wave            # opens the menu"
   echo ""
   echo "For more information, visit: https://github.com/Wuffz/wave"
 else

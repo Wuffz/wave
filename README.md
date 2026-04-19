@@ -1,338 +1,151 @@
-# 🌊 Wave
+# Wave
 
-A simple, elegant Git worktree manager inspired by Laravel Sail and Vessel.
+A tiny session manager that sits in front of [Claude Code](https://claude.com/claude-code).
 
-Wave makes it effortless to work on multiple branches simultaneously without the hassle of constant branch switching or stashing changes.
+Wave is a zero-deps bash script. It gives you a simple menu to spin up new
+git worktrees, resume work in existing ones, and drop straight into a Claude
+session in the right directory — so you can work on several features in parallel
+without fighting with `git worktree` commands.
 
-## What are Git Worktrees?
+**One invocation = one session.** Need several at once? Run `wave` in multiple
+terminal windows or multiplexer panes.
 
-Git worktrees let you check out multiple branches at the same time in separate directories. Instead of switching branches in a single directory, each worktree is a complete working copy with its own branch checked out.
-
-**The Power of Worktrees:**
-- Work on multiple features simultaneously, each with its own running dev environment
-- Review PRs without disrupting your current work
-- Run tests on one branch while developing on another
-- Compare different implementations side-by-side
-- No more `git stash` juggling or waiting for rebuilds
-
-Wave wraps Git's worktree commands with a simple, intuitive interface and adds powerful automation through setup/cleanup hooks.
-
-## Why Wave?
-
-Working on multiple features or bug fixes at once? Tired of:
-- Switching branches back and forth
-- Stashing and unstashing changes
-- Losing your mental context
-- Waiting for builds to restart
-
-Wave creates isolated worktrees for each branch, letting you keep multiple branches running side-by-side.
-
-## Installation
-
-Install Wave with a single command:
+## Install
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Wuffz/wave/main/bin/install.sh | sh
 ```
 
-The installer will ask you to choose:
-- **User install** (`~/.local/bin`) - No root required, recommended
-- **Global install** (`/usr/local/bin`) - Requires root, available to all users
+The installer asks whether to drop `wave` into `~/.local/bin` (no root) or
+`/usr/local/bin` (sudo).
 
-Or manually:
+Requirements: `bash`, `git`, and [Claude Code](https://claude.com/claude-code)
+on your `PATH`.
 
-```bash
-# User install (recommended)
-mkdir -p ~/.local/bin
-curl -o ~/.local/bin/wave https://raw.githubusercontent.com/Wuffz/wave/main/bin/wave.sh
-chmod +x ~/.local/bin/wave
+## Use
 
-# Make sure ~/.local/bin is in your PATH
-export PATH="$HOME/.local/bin:$PATH"
-```
-
-## Quick Start
+Inside any git repo:
 
 ```bash
-# Initialize Wave in your Git repository
-wave init
-
-# (Optional) Set your default base branch
-echo "DEFAULT_BASE_BRANCH=origin/develop" >> .wave/config
-
-# Create a worktree for an existing branch
-wave create feature/existing-branch
-
-# Create a new branch (uses default base from config, or current branch)
-wave create feature/new-feature
-
-# Create a new branch from a specific base (overrides config)
-wave create feature/new-login develop
-wave create hotfix/bug-123 origin/main
-
-# List all active worktrees
-wave ls
-
-# Run a command in a specific worktree
-wave exec feature/new-login npm run dev
-
-# Navigate to a worktree
-cd $(wave cd feature/new-login)
-
-# Navigate back to main repository
-cd $(wave cd origin)
-
-# Remove a worktree when done
-wave remove feature/new-login
+wave
 ```
 
-## Commands
-
-| Command | Description |
-|---------|-------------|
-| `wave init` | Initialize Wave in your repository |
-| `wave create <branch> [base]` | Create or checkout a worktree |
-| `wave remove <branch>` | Remove a worktree |
-| `wave ls` | List all active worktrees |
-| `wave status` | Show detailed worktree status (default) |
-| `wave` | Alias for `wave status` |
-| `wave exec <branch> <cmd>` | Execute a command in a worktree |
-| `wave cd [branch\|origin]` | Print worktree path (use: `cd $(wave cd branch)`) |
-| `wave prune` | Clean up stale worktree metadata (after manual deletion) |
-| `wave self-update` | Update Wave to the latest version |
-
-**Aliases:** `wave up` (create), `wave down` (remove) - for backward compatibility
-
-### Understanding `wave create`
-
-The `wave create` command is smart about branches:
-
-**Existing local branch:**
-```bash
-wave create feature/existing
-# Checks out the existing local branch in a new worktree
-```
-
-**Existing remote branch:**
-```bash
-wave create feature/from-teammate
-# Checks out origin/feature/from-teammate if it exists remotely
-```
-
-**New branch (uses config or current branch):**
-```bash
-wave create feature/new-thing
-# Priority: 1) Config DEFAULT_BASE_BRANCH, 2) Current branch
-```
-
-**New branch from specific base:**
-```bash
-wave create feature/new-thing develop
-# Creates a new branch from local 'develop' or 'origin/develop'
-# Command line argument overrides config
-
-wave create hotfix/urgent main
-# Creates from 'main' or 'origin/main'
-```
-
-Wave always prefers `origin/` (remote) over local branches when creating from a base, ensuring you're working from the latest code.
-
-## How It Works
-
-Wave organizes your worktrees in a clean structure alongside your main repository:
+That opens the menu:
 
 ```
-/home/you/projects/
-  ├── your-project/           # Your main repository
-  └── your-project-wave/      # Wave worktrees directory (sibling to main repo)
-      ├── feature-a/          # Worktree for feature-a branch
-      ├── feature-b/          # Worktree for feature-b branch
-      └── bugfix-123/         # Worktree for bugfix-123 branch
+wave  -  <project>
+------------------------------------------------------------
+  [n] new session
+  [r] resume session
+  [l] list worktrees
+  [g] go live (swap main checkout)
+  [c] clean a worktree
+  [q] quit
 ```
 
-**Where to find your worktrees:**
+### `[n] new session`
 
-If your main repo is at `/home/you/projects/myapp/`, Wave creates worktrees at `/home/you/projects/myapp-wave/`.
+Pick a base branch from a numbered list, type a name for the new branch, and
+wave:
 
-Each worktree is a complete working directory with its own branch checked out. You can open them in your editor, run dev servers, make commits - they're fully independent copies of your repository.
+1. Runs `git worktree add -b <branch> <path> <base>`
+2. Runs the optional `.wave/setup.sh` hook
+3. `exec`s `claude` in the new worktree
 
-## Configuration
+The worktree path is `../<project>-wave/<branch>` — sibling to your main repo.
 
-Wave uses a simple configuration file at `.wave/config` to customize behavior.
+### `[r] resume session`
 
-### Default Base Branch
+Pick a worktree from the list. Wave `cd`s there and runs `claude --continue`,
+which resumes the most recent Claude session in that directory. If there's no
+session yet, Claude just starts a new one.
 
-Set a default base branch for creating new worktrees:
+### `[l] list worktrees`
+
+Shows every worktree, its branch, last-commit age, and a `*` if the working
+tree is dirty.
+
+### `[g] go live (swap main checkout)`
+
+Your main repo is probably where `docker compose up` runs. Wave lets you
+promote a worktree's branch into that checkout so your existing docker setup
+picks it up without touching compose files.
+
+Wave:
+
+1. Refuses if the main repo has uncommitted changes
+2. Briefly detaches the source worktree (git won't let the same branch be
+   checked out twice)
+3. `git checkout`s the chosen branch in the main repo
+4. Runs the optional `.wave/go-live.sh` hook (e.g. `docker compose up -d`,
+   migrations)
+
+To swap back, just run `git checkout <other-branch>` in the main repo. The
+source worktree stays detached at the commit it was on; `wave resume` still
+works there.
+
+> **Note:** with the "forward-only migrations, shared DB" model, make sure
+> you're OK running the new branch's migrations against your local database
+> before going live.
+
+### `[c] clean a worktree`
+
+Pick a worktree, confirm, and wave runs `.wave/cleanup.sh`, removes the
+worktree, optionally deletes the branch, and prunes.
+
+## Direct subcommands
+
+Every menu item is also a subcommand, so you can skip the menu:
 
 ```bash
-# .wave/config
-DEFAULT_BASE_BRANCH=origin/develop
+wave new
+wave resume
+wave list
+wave go-live
+wave clean
+wave init          # create .wave/ config + hooks in the main repo
+wave self-update   # reinstall from latest
+wave version
+wave help
 ```
 
-**Priority order when creating branches:**
-1. Command line argument: `wave create feature-x main` (uses `main`)
-2. Config file: `DEFAULT_BASE_BRANCH=origin/develop` (uses `origin/develop`)
-3. Current branch: Falls back to whatever branch you're currently on
+## Hooks
 
-**Examples:**
+When you first run wave in a repo, it creates a `.wave/` directory with empty
+executable hooks. Fill them in as you like — if they aren't executable, wave
+skips them.
 
-```bash
-# Always create from origin/develop
-echo "DEFAULT_BASE_BRANCH=origin/develop" >> .wave/config
-wave create feature-x  # Creates from origin/develop
+| Hook | Args | When it runs |
+|---|---|---|
+| `.wave/setup.sh` | `<worktree-path> <branch>` | after `new`, before Claude starts |
+| `.wave/cleanup.sh` | `<worktree-path> <branch>` | before `clean` removes the worktree |
+| `.wave/go-live.sh` | `<branch> <main-repo-path>` | after `go-live` swaps the checkout |
 
-# Override with command line
-wave create hotfix-y main  # Creates from main (ignores config)
+Typical uses:
+
+- `setup.sh`: `cp .env.example .env`, `composer install`, `npm ci`, symlink
+  shared caches, etc.
+- `cleanup.sh`: archive logs, drop a tenant-specific docker volume, etc.
+- `go-live.sh`: `cd "$2" && docker compose up -d && docker compose exec app php artisan migrate`
+
+## Config
+
+`.wave/config` is a tiny shell-style key=value file:
+
+```sh
+# Default base branch when creating new worktrees.
+# Blank = use the main repo's current branch.
+DEFAULT_BASE_BRANCH=
 ```
 
-## Custom Hooks
+## Why it exists
 
-Wave supports multiple hooks for automation. All hooks are created in `.wave/` when you run `wave init`.
-
-### Worktree Lifecycle Hooks
-
-**Setup Hook (`.wave/setup.sh`)**
-
-Runs automatically **after** creating a new worktree:
-
-```bash
-#!/bin/sh
-# Args: $1=worktree_path $2=branch_name
-WORKTREE_PATH="$1"
-BRANCH_NAME="$2"
-
-cd "$WORKTREE_PATH"
-npm install
-cp .env.example .env
-echo "✅ Setup complete for $BRANCH_NAME"
-```
-
-**Cleanup Hook (`.wave/cleanup.sh`)**
-
-Runs automatically **before** removing a worktree:
-
-```bash
-#!/bin/sh
-# Args: $1=worktree_path $2=branch_name
-WORKTREE_PATH="$1"
-BRANCH_NAME="$2"
-
-# Clean up any resources
-echo "🧹 Cleaning up $BRANCH_NAME"
-```
-
-### Command Hooks
-
-**Up Hook (`.wave/up.sh`)**
-
-Runs **before** `wave up` or `wave create`:
-
-```bash
-#!/bin/sh
-# Args: $1=branch_name $2=base_branch
-BRANCH_NAME="$1"
-BASE_BRANCH="$2"
-
-echo "Preparing to create worktree for $BRANCH_NAME from $BASE_BRANCH..."
-# e.g., check disk space, fetch latest from origin
-git fetch --all
-```
-
-**Down Hook (`.wave/down.sh`)**
-
-Runs **before** `wave down` or `wave remove`:
-
-```bash
-#!/bin/sh
-# Args: $1=branch_name
-BRANCH_NAME="$1"
-
-echo "Preparing to remove worktree: $BRANCH_NAME..."
-# e.g., backup data, notify team
-```
-
-**Status Hook (`.wave/status.sh`)**
-
-Runs **before** `wave status` (also runs when you type just `wave`):
-
-```bash
-#!/bin/sh
-# Args: $1=current_branch
-CURRENT_BRANCH="$1"
-
-echo "Checking worktree health from $CURRENT_BRANCH..."
-# e.g., check for uncommitted changes, running processes
-```
-
-## Common Workflows
-
-### Working on Multiple Features
-```bash
-# You're on develop, start two new features
-wave create feature/user-auth develop
-wave create feature/new-dashboard develop
-
-# Each runs independently
-wave exec feature/user-auth npm run dev -- --port 3001
-wave exec feature/new-dashboard npm run dev -- --port 3002
-```
-
-### Reviewing a Teammate's PR
-```bash
-# Teammate pushed feature/cool-thing to origin
-wave create feature/cool-thing
-
-# Review it without affecting your current work
-wave exec feature/cool-thing npm run test
-```
-
-### Hotfix from Production
-```bash
-# Production is on main, you're working on develop
-wave create hotfix/critical-bug main
-
-# Fix, test, and push - your develop work is untouched
-wave remove hotfix/critical-bug
-```
-
-### Working Without PR Access
-```bash
-# You work on feature branches from develop
-wave create feature/payment-flow develop
-wave create feature/notifications develop
-
-# Each is based on origin/develop (latest remote)
-# No need to have develop checked out locally
-```
-
-## Requirements
-
-- Git 2.5+ (for worktree support)
-- POSIX-compliant shell (bash, zsh, sh)
-
-## Updating Wave
-
-Keep Wave up to date:
-
-```bash
-wave self-update
-```
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
+- `git worktree` is powerful but the commands are hard on the brain.
+- Claude Code has `-w` and `--continue` built in — wave is a thin menu in front
+  of those so you spend more time writing code and less time remembering flags.
+- GUIs exist, but they're overkill when all you want is "drop me into a fresh
+  session on a new branch."
 
 ## License
 
-MIT License - feel free to use Wave in your projects!
-
-## Inspiration
-
-Wave is inspired by the simplicity and elegance of:
-- [Laravel Sail](https://laravel.com/docs/sail)
-- [Vessel](https://vessel.shippingdocker.com/)
-
----
-
-Made with 🌊 by developers who love clean workflows
-
+See `LICENSE.MD`.
